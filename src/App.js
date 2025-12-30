@@ -6,7 +6,7 @@ import { Package, Users, BarChart3, LogOut, Camera, ArrowRight, ArrowLeft, Plus,
 import './App.css';
 
 // Firebase configuration - YOU NEED TO REPLACE THIS
-{
+const firebaseConfig = {
   apiKey: "AIzaSyAeVgWXO2tsP4QozFaOxRYAfgURGkV8CvI",
   authDomain: "cylinder-tracking-8b128.firebaseapp.com",
   projectId: "cylinder-tracking-8b128",
@@ -15,7 +15,6 @@ import './App.css';
   appId: "1:3374622360:web:270d65c986f7e6afce12ed",
   measurementId: "G-KSQV4483WL"
 };
-
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
