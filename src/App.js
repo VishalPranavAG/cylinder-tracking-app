@@ -6,13 +6,14 @@ import { Package, Users, BarChart3, LogOut, Camera, ArrowRight, ArrowLeft, Plus,
 import './App.css';
 
 // Firebase configuration - YOU NEED TO REPLACE THIS
-const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID"
+{
+  apiKey: "AIzaSyAeVgWXO2tsP4QozFaOxRYAfgURGkV8CvI",
+  authDomain: "cylinder-tracking-8b128.firebaseapp.com",
+  projectId: "cylinder-tracking-8b128",
+  storageBucket: "cylinder-tracking-8b128.firebasestorage.app",
+  messagingSenderId: "3374622360",
+  appId: "1:3374622360:web:270d65c986f7e6afce12ed",
+  measurementId: "G-KSQV4483WL"
 };
 
 const app = initializeApp(firebaseConfig);
