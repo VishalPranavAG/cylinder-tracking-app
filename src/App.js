@@ -747,4 +747,96 @@ function App() {
 
               {showUserForm && (
                 <div className="form">
-                  <h3>Create New
+                  <h3>Create New User</h3>
+                  <input
+                    type="email"
+                    placeholder="Email (e.g., driver2@cylinder.local)"
+                    value={userForm.email}
+                    onChange={(e) => setUserForm({...userForm, email: e.target.value})}
+                  />
+                  <input
+                    type="password"
+                    placeholder="Password (min 6 characters)"
+                    value={userForm.password}
+                    onChange={(e) => setUserForm({...userForm, password: e.target.value})}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Full Name"
+                    value={userForm.name}
+                    onChange={(e) => setUserForm({...userForm, name: e.target.value})}
+                  />
+                  <select
+                    value={userForm.role}
+                    onChange={(e) => setUserForm({...userForm, role: e.target.value})}
+                  >
+                    <option value="driver">Driver</option>
+                    <option value="admin">Admin</option>
+                    <option value="superadmin">Super Admin</option>
+                  </select>
+                  <div className="form-buttons">
+                    <button onClick={addUser} className="btn-primary"><UserPlus size={20} /> Create User</button>
+                    <button onClick={() => setShowUserForm(false)} className="btn-secondary"><X size={20} /> Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map(u => (
+                    <tr key={u.id}>
+                      <td>{u.name}</td>
+                      <td>{u.email}</td>
+                      <td>
+                        <span className={`status-badge ${u.role}`}>
+                          {u.role}
+                        </span>
+                      </td>
+                      <td>{u.createdAt?.toDate().toLocaleDateString()}</td>
+                      <td>
+                        {u.email !== user.email && (
+                          <button 
+                            onClick={() => deleteUser(u.id, u.email)}
+                            className="btn-secondary"
+                            style={{padding: '0.5rem'}}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {users.length === 0 && (
+                    <tr>
+                      <td colSpan="5" style={{textAlign: 'center', padding: '2rem', color: '#999'}}>
+                        No users found.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {activeTab === 'analytics' && user.role === 'superadmin' && (
+            <div className="section">
+              <h2>Analytics</h2>
+              <p style={{color: '#666'}}>Advanced analytics features coming in next phase...</p>
+            </div>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+export default App;
