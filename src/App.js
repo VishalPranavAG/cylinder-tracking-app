@@ -770,7 +770,7 @@ function Cylinders() {
       <Tbl cols={['', 'QR', 'Physical ID', 'Gas Type', 'Size', '']}
         rows={list.map(c => [
           <input type="checkbox" checked={sel.includes(c.id)} onChange={() => toggleSel(c.id)} onClick={e => e.stopPropagation()} />,
-          <strong>{c.qrCode}</strong>, c.physicalId, c.gasType, `${c.size} m³`,
+          <strong>{c.qrCode}</strong>, c.physicalId, c.gasType, `${c.size?.replace('m³','').trim()} m³`,
           <div className="row-acts">
             <button className="icon-btn" onClick={() => { setEditing(c); setForm({ physicalId: c.physicalId, size: c.size, gasType: c.gasType }); setOpen(true); }}><Svg d={IC.edit} size={14} /></button>
             <button className="icon-btn icon-del" onClick={() => setDel(c)}><Svg d={IC.trash} size={14} /></button>
@@ -877,7 +877,7 @@ function CylAnalytics({ settings }) {
             {rows.map(c => (
               <tr key={c.id} className="tbl-link" onClick={() => setSel(c)}>
                 <td><strong>{c.qrCode}</strong></td>
-                <td>{c.physicalId}</td><td>{c.size} m³</td>
+                <td>{c.physicalId}</td><td>{c.size?.replace('m³','').trim()} m³</td>
                 <td>{c._s.status === 'out' ? <Tag color="amber">Out</Tag> : <Tag color="green">Available</Tag>}</td>
                 <td>{c._s.customer || '—'}</td>
                 <td>{c._s.status === 'out' ? (c._s.overdue === 'critical' ? <Tag color="red">{c._s.daysOut}d</Tag> : c._s.overdue === 'warning' ? <Tag color="amber">{c._s.daysOut}d</Tag> : `${c._s.daysOut}d`) : '—'}</td>
@@ -897,7 +897,7 @@ function CylAnalytics({ settings }) {
     return (
       <div>
         <BackBtn onClick={() => setSel(null)} />
-        <div className="pg-hd"><h1>Cylinder {sel.qrCode}</h1><p className="pg-sub">Physical: {sel.physicalId} · {sel.gasType} · {sel.size} m³</p></div>
+        <div className="pg-hd"><h1>Cylinder {sel.qrCode}</h1><p className="pg-sub">Physical: {sel.physicalId} · {sel.gasType} · {sel.size?.replace('m³','').trim()} m³</p></div>
         <div className="kpi-grid">
           <KPI label="Status" value={s.status === 'out' ? 'OUT' : 'AVAILABLE'} color={s.status === 'out' ? '#d97706' : '#059669'} />
           <KPI label="With Customer" value={s.customer || '—'} color="#2563eb" />
