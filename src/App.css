@@ -434,3 +434,65 @@ select.inp { cursor:pointer; }
   .settings-card { padding:1rem 1.1rem; }
   .setting-row { flex-direction:column; align-items:flex-start; gap:0.5rem; }
 }
+
+/* ── Camera Scanning ─────────────────────────────────────────────────────── */
+.camera-overlay {
+  position: fixed; inset: 0; background: #000;
+  display: flex; flex-direction: column; z-index: 200;
+}
+.camera-hd {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 1rem 1.25rem; background: rgba(0,0,0,0.8);
+  color: #fff; font-size: 0.9rem; font-weight: 600;
+}
+.camera-close {
+  display: flex; align-items: center; gap: 0.4rem;
+  background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3);
+  color: #fff; padding: 0.45rem 1rem; border-radius: 8px;
+  font-size: 0.85rem; font-weight: 600; cursor: pointer;
+}
+.camera-close:hover { background: rgba(255,255,255,0.25); }
+.camera-video { width: 100%; flex: 1; object-fit: cover; }
+.camera-guide {
+  position: absolute; inset: 0; display: flex;
+  align-items: center; justify-content: center; pointer-events: none;
+}
+.camera-frame {
+  width: 220px; height: 220px;
+  border: 3px solid rgba(255,255,255,0.8);
+  border-radius: 16px;
+  box-shadow: 0 0 0 9999px rgba(0,0,0,0.45);
+}
+.camera-scanned {
+  padding: 0.75rem 1rem; background: rgba(0,0,0,0.75);
+  display: flex; flex-wrap: wrap; gap: 0.4rem;
+  max-height: 120px; overflow-y: auto;
+}
+.camera-tag {
+  background: #d1fae5; color: #065f46;
+  padding: 0.25rem 0.6rem; border-radius: 20px;
+  font-size: 0.78rem; font-weight: 600;
+}
+.camera-waiting { color: rgba(255,255,255,0.6); font-size: 0.82rem; padding: 0.2rem 0; }
+.camera-err {
+  background: #fee2e2; color: #991b1b;
+  padding: 0.6rem 1rem; font-size: 0.82rem; font-weight: 500;
+}
+.cam-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 38px; height: 38px; border-radius: 8px; flex-shrink: 0;
+  background: var(--surface2); border: 1.5px solid var(--border);
+  color: var(--text2); cursor: pointer; transition: all 0.12s;
+}
+.cam-btn:hover { background: var(--blue); border-color: var(--blue); color: #fff; }
+
+/* ── Mobile sign out button ──────────────────────────────────────────────── */
+.nav-item-signout-mobile {
+  display: none;
+  color: var(--red) !important;
+}
+.nav-item-signout-mobile:hover { background: #fee2e2 !important; }
+
+@media (max-width: 768px) {
+  .nav-item-signout-mobile { display: flex; }
+}
