@@ -50,6 +50,8 @@ const IC = {
   x: "M18 6L6 18M6 6l12 12", dl: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3",
   search: "M11 17a6 6 0 100-12 6 6 0 000 12zM21 21l-4.35-4.35", logout: "M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9",
   check: "M20 6L9 17l-5-5", back: "M19 12H5M12 19l-7-7 7-7",
+  camera: "M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2zM12 17a4 4 0 100-8 4 4 0 000 8z",
+  history2: "M3 3h18v18H3zM3 9h18M9 21V9",
 };
 
 const Btn = ({ children, variant = 'primary', danger, sm, full, disabled, onClick, type = 'button' }) => (
@@ -157,6 +159,7 @@ export default function App() {
   const NAV = [
     { id: 'dashboard', label: 'Dashboard', icon: IC.dash, show: true },
     { id: 'record', label: 'Record Trip', icon: IC.truck, show: isDrv },
+    { id: 'my-trips', label: 'My Trips', icon: IC.history2, show: isDrv },
     { id: 'customers', label: 'Customers', icon: IC.users, show: isAdmin },
     { id: 'cust-analytics', label: 'Customer Analytics', icon: IC.trend, show: isAdmin },
     { id: 'cylinders', label: 'Cylinders', icon: IC.pkg, show: isAdmin },
@@ -170,6 +173,7 @@ export default function App() {
   const PAGES = {
     dashboard: <Dashboard settings={settings} isAdmin={isAdmin} goTo={setPage} />,
     record: <RecordTrip profile={profile} />,
+    'my-trips': <MyTrips profile={profile} settings={settings} />,
     customers: <Customers />,
     'cust-analytics': <CustAnalytics settings={settings} />,
     cylinders: <Cylinders />,
@@ -196,6 +200,9 @@ export default function App() {
               <Svg d={n.icon} size={15} /><span>{n.label}</span>
             </button>
           ))}
+          <button className="nav-item nav-item-signout-mobile" onClick={() => signOut(auth)}>
+            <Svg d={IC.logout} size={15} /><span>Sign out</span>
+          </button>
         </nav>
         <div className="sidebar-foot">
           <div className="sidebar-user">
@@ -325,11 +332,55 @@ function RecordTrip({ profile }) {
   const [err, setErr] = useState('');
   const [done, setDone] = useState(false);
   const [notes, setNotes] = useState('');
+  const [vehicle, setVehicle] = useState('');
+  const [scanning, setScanning] = useState(null); // 'delivered' | 'collected' | null
+  const videoRef = React.useRef(null);
+  const streamRef = React.useRef(null);
 
   useEffect(() => {
     getDocs(collection(db, 'customers')).then(s => setCustomers(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, 'cylinders')).then(s => setCylinders(s.docs.map(d => ({ id: d.id, ...d.data() }))));
   }, []);
+
+  // Camera scanning
+  useEffect(() => {
+    if (!scanning) { stopCamera(); return; }
+    startCamera();
+  }, [scanning]);
+
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      streamRef.current = stream;
+      if (videoRef.current) videoRef.current.srcObject = stream;
+      scanLoop();
+    } catch (e) { setErr('Camera not available: ' + e.message); setScanning(null); }
+  };
+
+  const stopCamera = () => {
+    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+  };
+
+  const scanLoop = async () => {
+    if (!('BarcodeDetector' in window)) {
+      setErr('Camera scanning not supported on this browser. Use Chrome on Android or Safari 17+ on iOS. Please type QR codes manually.');
+      setScanning(null); stopCamera(); return;
+    }
+    const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+    const detect = async () => {
+      if (!videoRef.current || !streamRef.current) return;
+      try {
+        const codes = await detector.detect(videoRef.current);
+        if (codes.length > 0) {
+          const raw = codes[0].rawValue;
+          if (scanning === 'delivered') addCode(raw, delivered, setDelivered, parseInt(deliverQty), 'delivered');
+          else addCode(raw, collected, setCollected, parseInt(collectQty), 'collected');
+          setTimeout(detect, 1500); // pause briefly after each scan
+        } else { requestAnimationFrame(detect); }
+      } catch { requestAnimationFrame(detect); }
+    };
+    detect();
+  };
 
   const cylInfo = qr => cylinders.find(c => c.qrCode === qr);
 
@@ -349,20 +400,22 @@ function RecordTrip({ profile }) {
     const cust = customers.find(c => c.id === custId);
     const gasTypes = {};
     [...delivered, ...collected].forEach(qr => { const c = cylInfo(qr); if (c) gasTypes[qr] = c.gasType; });
+    stopCamera(); setScanning(null);
     await addDoc(collection(db, 'trips'), {
       customerId: custId, customerName: cust?.name || '',
       driverId: profile.uid, driverName: profile.name || profile.email,
       delivered, collected: parseInt(collectQty) > 0 ? collected : [],
       gasTypes, deliverQty: parseInt(deliverQty), collectQty: parseInt(collectQty) || 0,
-      notes, createdAt: serverTimestamp(), _timestamp: new Date().toISOString(),
+      notes, vehicle, createdAt: serverTimestamp(), _timestamp: new Date().toISOString(),
     });
     setDone(true);
   };
 
   const reset = () => {
+    stopCamera(); setScanning(null);
     setStep(1); setCustId(''); setDeliverQty(''); setCollectQty('');
     setDelivered([]); setCollected([]); setManualD(''); setManualC('');
-    setErr(''); setNotes(''); setDone(false);
+    setErr(''); setNotes(''); setVehicle(''); setDone(false);
   };
 
   if (done) {
@@ -373,6 +426,7 @@ function RecordTrip({ profile }) {
         <h2>Trip Recorded!</h2>
         <p>Delivered <strong>{deliverQty}</strong> cylinder{deliverQty > 1 ? 's' : ''} to <strong>{cust?.name}</strong></p>
         {parseInt(collectQty) > 0 && <p>Collected <strong>{collectQty}</strong> empty cylinder{collectQty > 1 ? 's' : ''}</p>}
+        {vehicle && <p>Vehicle: <strong>{vehicle}</strong></p>}
         <Btn onClick={reset}>Record Another Trip</Btn>
       </div>
     );
@@ -388,6 +442,9 @@ function RecordTrip({ profile }) {
             {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Sel>
         </Field>
+        <Field label="Vehicle Number" req>
+          <Inp value={vehicle} onChange={e => setVehicle(e.target.value.toUpperCase())} placeholder="e.g. TN01AB1234" />
+        </Field>
         <div className="two-col">
           <Field label="Full cylinders to DELIVER" req>
             <Inp type="number" min="0" value={deliverQty} onChange={e => setDeliverQty(e.target.value)} placeholder="e.g. 3" />
@@ -399,7 +456,8 @@ function RecordTrip({ profile }) {
         <Field label="Notes (optional)">
           <Inp value={notes} onChange={e => setNotes(e.target.value)} placeholder="Any extra info…" />
         </Field>
-        <Btn disabled={!custId || !deliverQty || parseInt(deliverQty) < 1} onClick={() => { setStep(2); setDelivered([]); setCollected([]); setErr(''); }} full>
+        <Btn disabled={!custId || !vehicle || !deliverQty || parseInt(deliverQty) < 1}
+          onClick={() => { setStep(2); setDelivered([]); setCollected([]); setErr(''); }} full>
           Continue →
         </Btn>
       </div>
@@ -411,7 +469,27 @@ function RecordTrip({ profile }) {
   const cust = customers.find(c => c.id === custId);
   const allDone = delivered.length === dQty && (cQty === 0 || collected.length === cQty);
 
-  const ScanSection = ({ title, color, codes, manualVal, setManual, onAdd, onRemove, qty, hint }) => (
+  // Camera overlay
+  if (scanning) return (
+    <div className="camera-overlay">
+      <div className="camera-hd">
+        <span>{scanning === 'delivered' ? '↑ Scanning deliveries' : '↓ Scanning collections'} — {scanning === 'delivered' ? delivered.length : collected.length}/{scanning === 'delivered' ? dQty : cQty}</span>
+        <button className="camera-close" onClick={() => setScanning(null)}><Svg d={IC.x} size={20} /> Done</button>
+      </div>
+      <video ref={videoRef} autoPlay playsInline className="camera-video" />
+      <div className="camera-guide"><div className="camera-frame" /></div>
+      {err && <div className="camera-err">{err}</div>}
+      <div className="camera-scanned">
+        {(scanning === 'delivered' ? delivered : collected).map(qr => {
+          const info = cylInfo(qr);
+          return <div key={qr} className="camera-tag">✓ {qr} · {info?.gasType} · {String(info?.size||'').replace('m³','')}m³</div>;
+        })}
+        {(scanning === 'delivered' ? delivered.length < dQty : collected.length < cQty) && <div className="camera-waiting">Point camera at QR code…</div>}
+      </div>
+    </div>
+  );
+
+  const ScanSection = ({ title, color, codes, manualVal, setManual, onAdd, onRemove, qty, hint, scanLabel }) => (
     <div className="scan-section" style={{ borderLeftColor: color }}>
       <div className="scan-sec-hd">
         <span className="scan-sec-title" style={{ color }}>{title}</span>
@@ -420,10 +498,13 @@ function RecordTrip({ profile }) {
       <div className="prog-bar"><div className="prog-fill" style={{ width: `${qty > 0 ? (codes.length / qty) * 100 : 100}%`, background: color }} /></div>
       <p className="scan-hint">{hint}</p>
       <div className="scan-input-row">
-        <Inp placeholder="Type QR code and press Enter…" value={manualVal}
+        <Inp placeholder="Type QR code and press Enter…" value={manualVal} autoFocus
           onChange={e => { setManual(e.target.value); setErr(''); }}
           onKeyDown={e => e.key === 'Enter' && onAdd(manualVal)} />
         <Btn sm onClick={() => onAdd(manualVal)}>Add</Btn>
+        <button className="cam-btn" onClick={() => { setErr(''); setScanning(scanLabel); }} title="Scan with camera">
+          <Svg d={IC.camera} size={18} />
+        </button>
       </div>
       <div className="scan-codes">
         {Array.from({ length: qty }).map((_, i) => {
@@ -432,7 +513,7 @@ function RecordTrip({ profile }) {
           return (
             <div key={i} className={`scan-row ${qr ? 'scan-row-filled' : 'scan-row-empty'}`}>
               <span className="scan-row-num">{i + 1}</span>
-              <span className="scan-row-code">{qr ? `${qr}  ·  ${info?.gasType || '?'}  ·  ${info?.size || '?'}m³` : 'Pending…'}</span>
+              <span className="scan-row-code">{qr ? `${qr}  ·  ${info?.gasType || '?'}  ·  ${String(info?.size||'?').replace('m³','')}m³` : 'Pending…'}</span>
               {qr && <button className="scan-row-rm" onClick={() => onRemove(qr)}><Svg d={IC.x} size={13} /></button>}
             </div>
           );
@@ -444,23 +525,198 @@ function RecordTrip({ profile }) {
   return (
     <div>
       <BackBtn onClick={() => setStep(1)} />
-      <div className="pg-hd"><h1>Scan Cylinders</h1><p className="pg-sub">Customer: <strong>{cust?.name}</strong></p></div>
+      <div className="pg-hd">
+        <div><h1>Scan Cylinders</h1><p className="pg-sub">Customer: <strong>{cust?.name}</strong> · Vehicle: <strong>{vehicle}</strong></p></div>
+      </div>
       {err && <div className="inline-err">{err}</div>}
       <ScanSection title="↑ Delivering (Full Cylinders Out)" color="#2563eb"
         codes={delivered} manualVal={manualD} setManual={setManualD}
         onAdd={c => addCode(c, delivered, setDelivered, dQty, 'delivered')}
         onRemove={c => setDelivered(p => p.filter(x => x !== c))} qty={dQty}
-        hint="Scan or type each full cylinder being delivered to this customer." />
+        hint="Type QR code and press Enter, or tap the camera icon to scan."
+        scanLabel="delivered" />
       {cQty > 0 && (
         <ScanSection title="↓ Collecting (Empty Cylinders Back)" color="#059669"
           codes={collected} manualVal={manualC} setManual={setManualC}
           onAdd={c => addCode(c, collected, setCollected, cQty, 'collected')}
           onRemove={c => setCollected(p => p.filter(x => x !== c))} qty={cQty}
-          hint="Scan or type each empty cylinder being collected back." />
+          hint="Type QR code and press Enter, or tap the camera icon to scan."
+          scanLabel="collected" />
       )}
       <Btn disabled={!allDone} onClick={save} full>
         {allDone ? 'Save Trip Record' : `Complete all scans first (${delivered.length}/${dQty} delivered${cQty > 0 ? `, ${collected.length}/${cQty} collected` : ''})`}
       </Btn>
+    </div>
+  );
+}
+
+// ── My Trips (Driver edit their own trips) ─────────────────────────────────
+function MyTrips({ profile, settings }) {
+  const [trips, setTrips] = useState([]);
+  const [customers, setCustomers] = useState([]);
+  const [cylinders, setCylinders] = useState([]);
+  const [editing, setEditing] = useState(null);
+  const [editDelivered, setEditDelivered] = useState([]);
+  const [editCollected, setEditCollected] = useState([]);
+  const [editNotes, setEditNotes] = useState('');
+  const [editVehicle, setEditVehicle] = useState('');
+  const [manualD, setManualD] = useState('');
+  const [manualC, setManualC] = useState('');
+  const [err, setErr] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saved, setSaved] = useState(false);
+
+  const load = useCallback(async () => {
+    const [ts, cs, cyls] = await Promise.all([
+      getDocs(collection(db, 'trips')),
+      getDocs(collection(db, 'customers')),
+      getDocs(collection(db, 'cylinders')),
+    ]);
+    const allTrips = ts.docs.map(d => ({ id: d.id, ...d.data() }))
+      .filter(t => t.driverId === profile.uid)
+      .sort((a, b) => toDate(b.createdAt) - toDate(a.createdAt));
+    setTrips(allTrips);
+    setCustomers(cs.docs.map(d => ({ id: d.id, ...d.data() })));
+    setCylinders(cyls.docs.map(d => ({ id: d.id, ...d.data() })));
+    setLoading(false);
+  }, [profile.uid]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const canEdit = (trip) => {
+    const created = toDate(trip.createdAt);
+    if (!created) return false;
+    const hoursAgo = (Date.now() - created.getTime()) / 3600000;
+    return hoursAgo <= (settings.driverEditHours || 24);
+  };
+
+  const openEdit = (trip) => {
+    setEditing(trip);
+    setEditDelivered([...(trip.delivered || [])]);
+    setEditCollected([...(trip.collected || [])]);
+    setEditNotes(trip.notes || '');
+    setEditVehicle(trip.vehicle || '');
+    setErr('');
+  };
+
+  const cylInfo = qr => cylinders.find(c => c.qrCode === qr);
+
+  const addEditCode = (code, list, setList, label) => {
+    const c = code.trim(); if (!c) return;
+    if (list.includes(c)) { setErr(`QR ${c} already added`); return; }
+    if (!cylinders.find(x => x.qrCode === c)) { setErr(`QR ${c} not found in system`); return; }
+    setList(p => [...p, c]);
+    if (label === 'delivered') setManualD(''); else setManualC('');
+    setErr('');
+  };
+
+  const saveEdit = async () => {
+    if (!editDelivered.length) { setErr('Must have at least 1 delivered cylinder'); return; }
+    const gasTypes = {};
+    [...editDelivered, ...editCollected].forEach(qr => { const c = cylInfo(qr); if (c) gasTypes[qr] = c.gasType; });
+    await updateDoc(doc(db, 'trips', editing.id), {
+      delivered: editDelivered,
+      collected: editCollected,
+      gasTypes,
+      deliverQty: editDelivered.length,
+      collectQty: editCollected.length,
+      notes: editNotes,
+      vehicle: editVehicle,
+      _editedAt: new Date().toISOString(),
+    });
+    setEditing(null); setSaved(true);
+    setTimeout(() => setSaved(false), 3000);
+    load();
+  };
+
+  if (editing) {
+    const cust = customers.find(c => c.id === editing.customerId);
+    return (
+      <div>
+        <BackBtn onClick={() => setEditing(null)} />
+        <div className="pg-hd"><h1>Edit Trip</h1><p className="pg-sub">{cust?.name} · {fmtDT(editing.createdAt)}</p></div>
+        {err && <div className="inline-err">{err}</div>}
+
+        <div className="card">
+          <div className="two-col">
+            <Field label="Vehicle Number"><Inp value={editVehicle} onChange={e => setEditVehicle(e.target.value.toUpperCase())} /></Field>
+            <Field label="Notes"><Inp value={editNotes} onChange={e => setEditNotes(e.target.value)} /></Field>
+          </div>
+        </div>
+
+        <div className="scan-section" style={{ borderLeftColor: '#2563eb' }}>
+          <div className="scan-sec-hd">
+            <span className="scan-sec-title" style={{ color: '#2563eb' }}>↑ Delivered Cylinders</span>
+            <span className="scan-progress">{editDelivered.length}</span>
+          </div>
+          <div className="scan-input-row">
+            <Inp placeholder="Add QR code…" value={manualD} onChange={e => { setManualD(e.target.value); setErr(''); }}
+              onKeyDown={e => e.key === 'Enter' && addEditCode(manualD, editDelivered, setEditDelivered, 'delivered')} />
+            <Btn sm onClick={() => addEditCode(manualD, editDelivered, setEditDelivered, 'delivered')}>Add</Btn>
+          </div>
+          <div className="scan-codes">
+            {editDelivered.map(qr => {
+              const info = cylInfo(qr);
+              return (
+                <div key={qr} className="scan-row scan-row-filled">
+                  <span className="scan-row-code">{qr} · {info?.gasType || '?'} · {String(info?.size||'?').replace('m³','')}m³</span>
+                  <button className="scan-row-rm" onClick={() => setEditDelivered(p => p.filter(x => x !== qr))}><Svg d={IC.x} size={13} /></button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="scan-section" style={{ borderLeftColor: '#059669' }}>
+          <div className="scan-sec-hd">
+            <span className="scan-sec-title" style={{ color: '#059669' }}>↓ Collected Cylinders</span>
+            <span className="scan-progress">{editCollected.length}</span>
+          </div>
+          <div className="scan-input-row">
+            <Inp placeholder="Add QR code…" value={manualC} onChange={e => { setManualC(e.target.value); setErr(''); }}
+              onKeyDown={e => e.key === 'Enter' && addEditCode(manualC, editCollected, setEditCollected, 'collected')} />
+            <Btn sm onClick={() => addEditCode(manualC, editCollected, setEditCollected, 'collected')}>Add</Btn>
+          </div>
+          <div className="scan-codes">
+            {editCollected.map(qr => {
+              const info = cylInfo(qr);
+              return (
+                <div key={qr} className="scan-row scan-row-filled" style={{ borderColor: '#86efac', background: '#f0fdf4' }}>
+                  <span className="scan-row-code">{qr} · {info?.gasType || '?'} · {String(info?.size||'?').replace('m³','')}m³</span>
+                  <button className="scan-row-rm" onClick={() => setEditCollected(p => p.filter(x => x !== qr))}><Svg d={IC.x} size={13} /></button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: '0.75rem' }}>
+          <Btn onClick={saveEdit} full>Save Changes</Btn>
+          <Btn variant="ghost" onClick={() => setEditing(null)} full>Cancel</Btn>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="pg-hd"><h1>My Trips</h1><p className="pg-sub">Your recent trip records · Editable within {settings.driverEditHours || 24} hours</p></div>
+      {saved && <div className="success-bar"><Svg d={IC.check} size={15} /> Trip updated successfully.</div>}
+      {loading ? <div className="pg-load">Loading…</div> : (
+        <Tbl cols={['Date', 'Customer', 'Delivered', 'Collected', 'Vehicle', '']}
+          rows={trips.map(t => [
+            fmtDT(t.createdAt),
+            t.customerName,
+            (t.delivered || []).join(', ') || '—',
+            (t.collected || []).join(', ') || '—',
+            t.vehicle || '—',
+            canEdit(t)
+              ? <Btn sm onClick={() => openEdit(t)}><Svg d={IC.edit} size={13} /> Edit</Btn>
+              : <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Locked</span>
+          ])}
+          empty="No trips recorded yet."
+        />
+      )}
     </div>
   );
 }
@@ -722,7 +978,7 @@ function Cylinders() {
         pdf.setFontSize(12); pdf.setFont('helvetica', 'bold');
         pdf.text(c.qrCode, x + sz / 2, y + sz + 5, { align: 'center' });
         pdf.setFontSize(8); pdf.setFont('helvetica', 'normal');
-        if (c.gasType && c.gasType !== '---') pdf.text(`${c.gasType} · ${c.size}m³`, x + sz / 2, y + sz + 10, { align: 'center' });
+        if (c.gasType && c.gasType !== '---') pdf.text(`${c.gasType} · ${String(c.size||'').replace('m³','')}m³`, x + sz / 2, y + sz + 10, { align: 'center' });
         n++; x += sz + gap;
         if (n % cols === 0) { x = mg; y += sz + gap + 14; }
         if (n % (cols * 4) === 0 && n < items.length) { pdf.addPage(); x = mg; y = mg; }
