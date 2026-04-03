@@ -160,6 +160,7 @@ export default function App() {
     { id: 'dashboard', label: 'Dashboard', icon: IC.dash, show: true },
     { id: 'record', label: 'Record Trip', icon: IC.truck, show: isDrv },
     { id: 'my-trips', label: 'My Trips', icon: IC.history2, show: isDrv },
+    { id: 'vehicles', label: 'Vehicles', icon: IC.truck, show: isAdmin },
     { id: 'customers', label: 'Customers', icon: IC.users, show: isAdmin },
     { id: 'cust-analytics', label: 'Customer Analytics', icon: IC.trend, show: isAdmin },
     { id: 'cylinders', label: 'Cylinders', icon: IC.pkg, show: isAdmin },
@@ -175,6 +176,7 @@ export default function App() {
     record: <RecordTrip profile={profile} />,
     'my-trips': <MyTrips profile={profile} settings={settings} />,
     customers: <Customers />,
+    vehicles: <Vehicles />,
     'cust-analytics': <CustAnalytics settings={settings} />,
     cylinders: <Cylinders />,
     'cyl-analytics': <CylAnalytics settings={settings} />,
@@ -333,6 +335,7 @@ function RecordTrip({ profile }) {
   const [done, setDone] = useState(false);
   const [notes, setNotes] = useState('');
   const [vehicle, setVehicle] = useState('');
+  const [vehicles, setVehicles] = useState([]);
   const [scanning, setScanning] = useState(null); // 'delivered' | 'collected' | null
   const videoRef = React.useRef(null);
   const streamRef = React.useRef(null);
@@ -340,6 +343,7 @@ function RecordTrip({ profile }) {
   useEffect(() => {
     getDocs(collection(db, 'customers')).then(s => setCustomers(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, 'cylinders')).then(s => setCylinders(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+    getDocs(collection(db, 'vehicles')).then(s => setVehicles(s.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => v.active !== false)));
   }, []);
 
   // Camera scanning
@@ -443,7 +447,13 @@ function RecordTrip({ profile }) {
           </Sel>
         </Field>
         <Field label="Vehicle Number" req>
-          <Inp value={vehicle} onChange={e => setVehicle(e.target.value.toUpperCase())} placeholder="e.g. TN01AB1234" />
+          {vehicles.length > 0
+            ? <Sel value={vehicle} onChange={e => setVehicle(e.target.value)}>
+                <option value="">Select vehicle…</option>
+                {vehicles.map(v => <option key={v.id} value={v.number}>{v.number}{v.description ? ` — ${v.description}` : ''}</option>)}
+              </Sel>
+            : <Inp value={vehicle} onChange={e => setVehicle(e.target.value.toUpperCase())} placeholder="No vehicles registered yet — type manually" />
+          }
         </Field>
         <div className="two-col">
           <Field label="Full cylinders to DELIVER" req>
@@ -555,6 +565,7 @@ function MyTrips({ profile, settings }) {
   const [trips, setTrips] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [cylinders, setCylinders] = useState([]);
+  const [vehicles, setVehicles] = useState([]);
   const [editing, setEditing] = useState(null);
   const [editDelivered, setEditDelivered] = useState([]);
   const [editCollected, setEditCollected] = useState([]);
@@ -567,10 +578,11 @@ function MyTrips({ profile, settings }) {
   const [saved, setSaved] = useState(false);
 
   const load = useCallback(async () => {
-    const [ts, cs, cyls] = await Promise.all([
+    const [ts, cs, cyls, vs] = await Promise.all([
       getDocs(collection(db, 'trips')),
       getDocs(collection(db, 'customers')),
       getDocs(collection(db, 'cylinders')),
+      getDocs(collection(db, 'vehicles')),
     ]);
     const allTrips = ts.docs.map(d => ({ id: d.id, ...d.data() }))
       .filter(t => t.driverId === profile.uid)
@@ -578,6 +590,7 @@ function MyTrips({ profile, settings }) {
     setTrips(allTrips);
     setCustomers(cs.docs.map(d => ({ id: d.id, ...d.data() })));
     setCylinders(cyls.docs.map(d => ({ id: d.id, ...d.data() })));
+    setVehicles(vs.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => v.active !== false));
     setLoading(false);
   }, [profile.uid]);
 
@@ -639,7 +652,15 @@ function MyTrips({ profile, settings }) {
 
         <div className="card">
           <div className="two-col">
-            <Field label="Vehicle Number"><Inp value={editVehicle} onChange={e => setEditVehicle(e.target.value.toUpperCase())} /></Field>
+            <Field label="Vehicle Number">
+              {vehicles.length > 0
+                ? <Sel value={editVehicle} onChange={e => setEditVehicle(e.target.value)}>
+                    <option value="">Select vehicle…</option>
+                    {vehicles.map(v => <option key={v.id} value={v.number}>{v.number}{v.description ? ` — ${v.description}` : ''}</option>)}
+                  </Sel>
+                : <Inp value={editVehicle} onChange={e => setEditVehicle(e.target.value.toUpperCase())} />
+              }
+            </Field>
             <Field label="Notes"><Inp value={editNotes} onChange={e => setEditNotes(e.target.value)} /></Field>
           </div>
         </div>
@@ -1281,6 +1302,88 @@ function DriverAnalytics() {
           rows={all.map(d => [<strong>{d.name}</strong>, d._s.trips, d._s.delivered, d._s.collected, d._s.top[0]?.[0] || '—'])}
           onRow={i => setSel(all[i])} />
       )}
+    </div>
+  );
+}
+
+// ── Vehicles ───────────────────────────────────────────────────────────────
+function Vehicles() {
+  const [list, setList] = useState([]);
+  const [form, setForm] = useState({ number: '', description: '' });
+  const [editing, setEditing] = useState(null);
+  const [open, setOpen] = useState(false);
+
+  const load = useCallback(async () => {
+    const s = await getDocs(collection(db, 'vehicles'));
+    setList(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.number?.localeCompare(b.number)));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const openAdd = () => { setForm({ number: '', description: '' }); setEditing(null); setOpen(true); };
+  const openEdit = v => { setForm({ number: v.number, description: v.description || '' }); setEditing(v); setOpen(true); };
+
+  const save = async () => {
+    if (!form.number.trim()) return alert('Vehicle number required');
+    const num = form.number.trim().toUpperCase();
+    if (!editing && list.find(v => v.number === num)) return alert(`${num} is already registered`);
+    if (editing) {
+      await updateDoc(doc(db, 'vehicles', editing.id), { number: num, description: form.description });
+    } else {
+      await addDoc(collection(db, 'vehicles'), { number: num, description: form.description, active: true, createdAt: serverTimestamp() });
+    }
+    setOpen(false); load();
+  };
+
+  const toggleActive = async (v) => {
+    await updateDoc(doc(db, 'vehicles', v.id), { active: !v.active });
+    load();
+  };
+
+  const del = async (v) => {
+    if (!window.confirm(`Delete vehicle ${v.number}?`)) return;
+    await deleteDoc(doc(db, 'vehicles', v.id)); load();
+  };
+
+  return (
+    <div>
+      <div className="pg-hd">
+        <div><h1>Vehicles</h1><p className="pg-sub">{list.length} registered · Drivers select from this list when recording a trip</p></div>
+        <Btn sm onClick={openAdd}><Svg d={IC.plus} size={14} /> Add Vehicle</Btn>
+      </div>
+      <Tbl
+        cols={['Vehicle Number', 'Description', 'Status', '']}
+        rows={list.map(v => [
+          <strong>{v.number}</strong>,
+          v.description || '—',
+          v.active !== false
+            ? <Tag color="green">Active</Tag>
+            : <Tag color="amber">Inactive</Tag>,
+          <div className="row-acts">
+            <button className="icon-btn" onClick={() => openEdit(v)}><Svg d={IC.edit} size={14} /></button>
+            <button className="icon-btn" title={v.active !== false ? 'Deactivate' : 'Activate'}
+              onClick={() => toggleActive(v)}
+              style={{ color: v.active !== false ? 'var(--amber)' : 'var(--green)' }}>
+              {v.active !== false ? '⏸' : '▶'}
+            </button>
+            <button className="icon-btn icon-del" onClick={() => del(v)}><Svg d={IC.trash} size={14} /></button>
+          </div>
+        ])}
+        empty="No vehicles registered yet. Add one to get started."
+      />
+      <Modal open={open} title={editing ? 'Edit Vehicle' : 'Add Vehicle'} onClose={() => setOpen(false)}>
+        <div className="modal-body">
+          <Field label="Vehicle Number" req>
+            <Inp value={form.number} onChange={e => setForm({ ...form, number: e.target.value.toUpperCase() })} placeholder="e.g. TN01AB1234" />
+          </Field>
+          <Field label="Description">
+            <Inp value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="e.g. Tata Ace, Large Truck… (optional)" />
+          </Field>
+        </div>
+        <div className="modal-ft">
+          <Btn onClick={save}>Save</Btn>
+          <Btn variant="ghost" onClick={() => setOpen(false)}>Cancel</Btn>
+        </div>
+      </Modal>
     </div>
   );
 }
