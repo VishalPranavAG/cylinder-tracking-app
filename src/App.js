@@ -30,6 +30,15 @@ const fmtDT = ts => { const d = toDate(ts); return d ? d.toLocaleString('en-IN',
 const pad3 = n => String(n).padStart(3, '0');
 const nextQR = list => list.length ? pad3(Math.max(...list.map(c => parseInt(c.qrCode) || 0)) + 1) : '001';
 
+// ── CHANGE 1: CCPL display format ─────────────────────────────────────────
+// Formats QR code for display: "001" → "CCPL-00001"
+const fmtQR = qr => {
+  if (!qr) return qr;
+  const n = parseInt(qr);
+  if (isNaN(n)) return qr;
+  return `CCPL-${String(n).padStart(5, '0')}`;
+};
+
 const Svg = ({ d, size = 16 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
     <path d={d} />
@@ -52,6 +61,7 @@ const IC = {
   check: "M20 6L9 17l-5-5", back: "M19 12H5M12 19l-7-7 7-7",
   camera: "M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2zM12 17a4 4 0 100-8 4 4 0 000 8z",
   history2: "M3 3h18v18H3zM3 9h18M9 21V9",
+  pin: "M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zM12 11.5a2.5 2.5 0 010-5 2.5 2.5 0 010 5z",
 };
 
 const Btn = ({ children, variant = 'primary', danger, sm, full, disabled, onClick, type = 'button' }) => (
@@ -131,6 +141,15 @@ const SearchBar = ({ placeholder, value, onChange }) => (
   </div>
 );
 
+// ── CHANGE 2: GPS distance helper ─────────────────────────────────────────
+const gpsDistance = (lat1, lon1, lat2, lon2) => {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -175,7 +194,7 @@ export default function App() {
     dashboard: <Dashboard settings={settings} isAdmin={isAdmin} goTo={setPage} />,
     record: <RecordTrip profile={profile} />,
     'my-trips': <MyTrips profile={profile} settings={settings} />,
-    customers: <Customers />,
+    customers: <Customers isSA={isSA} />,
     vehicles: <Vehicles />,
     'cust-analytics': <CustAnalytics settings={settings} />,
     cylinders: <Cylinders />,
@@ -320,6 +339,7 @@ function Dashboard({ settings, isAdmin, goTo }) {
   );
 }
 
+// ── CHANGE 3: RecordTrip with GPS nearest customer ─────────────────────────
 function RecordTrip({ profile }) {
   const [step, setStep] = useState(1);
   const [customers, setCustomers] = useState([]);
@@ -333,10 +353,14 @@ function RecordTrip({ profile }) {
   const [manualC, setManualC] = useState('');
   const [err, setErr] = useState('');
   const [done, setDone] = useState(false);
+  const [savedTripId, setSavedTripId] = useState(null);
+  const [savedCustId, setSavedCustId] = useState(null);
   const [notes, setNotes] = useState('');
   const [vehicle, setVehicle] = useState('');
   const [vehicles, setVehicles] = useState([]);
-  const [scanning, setScanning] = useState(null); // 'delivered' | 'collected' | null
+  const [scanning, setScanning] = useState(null);
+  const [nearbyCustomers, setNearbyCustomers] = useState([]);
+  const [gpsStatus, setGpsStatus] = useState('idle'); // idle | loading | done | error
   const videoRef = React.useRef(null);
   const streamRef = React.useRef(null);
 
@@ -346,7 +370,25 @@ function RecordTrip({ profile }) {
     getDocs(collection(db, 'vehicles')).then(s => setVehicles(s.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => v.active !== false)));
   }, []);
 
-  // Camera scanning
+  // Get nearby customers on mount
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    setGpsStatus('loading');
+    navigator.geolocation.getCurrentPosition(pos => {
+      const { latitude, longitude } = pos.coords;
+      getDocs(collection(db, 'customers')).then(s => {
+        const all = s.docs.map(d => ({ id: d.id, ...d.data() }));
+        const withDist = all
+          .filter(c => c.lat && c.lng)
+          .map(c => ({ ...c, dist: gpsDistance(latitude, longitude, c.lat, c.lng) }))
+          .sort((a, b) => a.dist - b.dist)
+          .slice(0, 3);
+        setNearbyCustomers(withDist);
+        setGpsStatus('done');
+      });
+    }, () => setGpsStatus('error'));
+  }, []);
+
   useEffect(() => {
     if (!scanning) { stopCamera(); return; }
     startCamera();
@@ -379,7 +421,7 @@ function RecordTrip({ profile }) {
           const raw = codes[0].rawValue;
           if (scanning === 'delivered') addCode(raw, delivered, setDelivered, parseInt(deliverQty), 'delivered');
           else addCode(raw, collected, setCollected, parseInt(collectQty), 'collected');
-          setTimeout(detect, 1500); // pause briefly after each scan
+          setTimeout(detect, 1500);
         } else { requestAnimationFrame(detect); }
       } catch { requestAnimationFrame(detect); }
     };
@@ -405,13 +447,15 @@ function RecordTrip({ profile }) {
     const gasTypes = {};
     [...delivered, ...collected].forEach(qr => { const c = cylInfo(qr); if (c) gasTypes[qr] = c.gasType; });
     stopCamera(); setScanning(null);
-    await addDoc(collection(db, 'trips'), {
+    const ref = await addDoc(collection(db, 'trips'), {
       customerId: custId, customerName: cust?.name || '',
       driverId: profile.uid, driverName: profile.name || profile.email,
       delivered, collected: parseInt(collectQty) > 0 ? collected : [],
       gasTypes, deliverQty: parseInt(deliverQty), collectQty: parseInt(collectQty) || 0,
       notes, vehicle, createdAt: serverTimestamp(), _timestamp: new Date().toISOString(),
     });
+    setSavedTripId(ref.id);
+    setSavedCustId(custId);
     setDone(true);
   };
 
@@ -420,19 +464,19 @@ function RecordTrip({ profile }) {
     setStep(1); setCustId(''); setDeliverQty(''); setCollectQty('');
     setDelivered([]); setCollected([]); setManualD(''); setManualC('');
     setErr(''); setNotes(''); setVehicle(''); setDone(false);
+    setSavedTripId(null); setSavedCustId(null);
   };
 
   if (done) {
-    const cust = customers.find(c => c.id === custId);
+    const cust = customers.find(c => c.id === custId || c.id === savedCustId);
     return (
-      <div className="done-wrap">
-        <div className="done-icon"><Svg d={IC.check} size={28} /></div>
-        <h2>Trip Recorded!</h2>
-        <p>Delivered <strong>{deliverQty}</strong> cylinder{deliverQty > 1 ? 's' : ''} to <strong>{cust?.name}</strong></p>
-        {parseInt(collectQty) > 0 && <p>Collected <strong>{collectQty}</strong> empty cylinder{collectQty > 1 ? 's' : ''}</p>}
-        {vehicle && <p>Vehicle: <strong>{vehicle}</strong></p>}
-        <Btn onClick={reset}>Record Another Trip</Btn>
-      </div>
+      <TripDoneScreen
+        cust={cust}
+        deliverQty={deliverQty}
+        collectQty={collectQty}
+        vehicle={vehicle}
+        onReset={reset}
+      />
     );
   }
 
@@ -440,6 +484,22 @@ function RecordTrip({ profile }) {
     <div>
       <div className="pg-hd"><h1>Record Trip</h1><p className="pg-sub">Log a delivery and collection in one entry</p></div>
       <div className="card">
+        {/* ── Nearby customers suggestion ── */}
+        {nearbyCustomers.length > 0 && (
+          <div className="nearby-box">
+            <div className="nearby-label"><Svg d={IC.pin} size={13} /> Nearby customers</div>
+            <div className="nearby-chips">
+              {nearbyCustomers.map(c => (
+                <button key={c.id} className={`nearby-chip${custId === c.id ? ' nearby-chip-active' : ''}`}
+                  onClick={() => setCustId(c.id)}>
+                  {c.name}
+                  <span className="nearby-dist">{c.dist < 1000 ? `${Math.round(c.dist)}m` : `${(c.dist / 1000).toFixed(1)}km`}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <Field label="Customer" req>
           <Sel value={custId} onChange={e => setCustId(e.target.value)}>
             <option value="">Select customer…</option>
@@ -479,7 +539,6 @@ function RecordTrip({ profile }) {
   const cust = customers.find(c => c.id === custId);
   const allDone = delivered.length === dQty && (cQty === 0 || collected.length === cQty);
 
-  // Camera overlay
   if (scanning) return (
     <div className="camera-overlay">
       <div className="camera-hd">
@@ -492,7 +551,7 @@ function RecordTrip({ profile }) {
       <div className="camera-scanned">
         {(scanning === 'delivered' ? delivered : collected).map(qr => {
           const info = cylInfo(qr);
-          return <div key={qr} className="camera-tag">✓ {qr} · {info?.gasType} · {String(info?.size||'').replace('m³','')}m³</div>;
+          return <div key={qr} className="camera-tag">✓ {fmtQR(qr)} · {info?.gasType} · {String(info?.size||'').replace('m³','')}m³</div>;
         })}
         {(scanning === 'delivered' ? delivered.length < dQty : collected.length < cQty) && <div className="camera-waiting">Point camera at QR code…</div>}
       </div>
@@ -523,7 +582,8 @@ function RecordTrip({ profile }) {
           return (
             <div key={i} className={`scan-row ${qr ? 'scan-row-filled' : 'scan-row-empty'}`}>
               <span className="scan-row-num">{i + 1}</span>
-              <span className="scan-row-code">{qr ? `${qr}  ·  ${info?.gasType || '?'}  ·  ${String(info?.size||'?').replace('m³','')}m³` : 'Pending…'}</span>
+              {/* CHANGE 1: show CCPL-XXXXX format */}
+              <span className="scan-row-code">{qr ? `${fmtQR(qr)}  ·  ${info?.gasType || '?'}  ·  ${String(info?.size||'?').replace('m³','')}m³` : 'Pending…'}</span>
               {qr && <button className="scan-row-rm" onClick={() => onRemove(qr)}><Svg d={IC.x} size={13} /></button>}
             </div>
           );
@@ -560,7 +620,60 @@ function RecordTrip({ profile }) {
   );
 }
 
-// ── My Trips (Driver edit their own trips) ─────────────────────────────────
+// ── CHANGE 3: Trip done screen with Save Location button ──────────────────
+function TripDoneScreen({ cust, deliverQty, collectQty, vehicle, onReset }) {
+  const [locSaved, setLocSaved] = useState(false);
+  const [locLoading, setLocLoading] = useState(false);
+  const [hasLoc, setHasLoc] = useState(null); // null=checking, true=already has, false=no loc
+
+  useEffect(() => {
+    if (!cust) return;
+    getDoc(doc(db, 'customers', cust.id)).then(snap => {
+      const d = snap.data();
+      setHasLoc(!!(d?.lat && d?.lng));
+    });
+  }, [cust]);
+
+  const saveLocation = () => {
+    if (!navigator.geolocation) return alert('GPS not available on this device');
+    setLocLoading(true);
+    navigator.geolocation.getCurrentPosition(async pos => {
+      await updateDoc(doc(db, 'customers', cust.id), {
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+      });
+      setLocLoading(false);
+      setLocSaved(true);
+    }, () => {
+      setLocLoading(false);
+      alert('Could not get GPS location. Please try again.');
+    });
+  };
+
+  return (
+    <div className="done-wrap">
+      <div className="done-icon"><Svg d={IC.check} size={28} /></div>
+      <h2>Trip Recorded!</h2>
+      <p>Delivered <strong>{deliverQty}</strong> cylinder{deliverQty > 1 ? 's' : ''} to <strong>{cust?.name}</strong></p>
+      {parseInt(collectQty) > 0 && <p>Collected <strong>{collectQty}</strong> empty cylinder{collectQty > 1 ? 's' : ''}</p>}
+      {vehicle && <p>Vehicle: <strong>{vehicle}</strong></p>}
+
+      {/* Save location button — only show if customer has no location saved yet */}
+      {cust && hasLoc === false && !locSaved && (
+        <button className="save-loc-btn" onClick={saveLocation} disabled={locLoading}>
+          <Svg d={IC.pin} size={15} />
+          {locLoading ? 'Getting location…' : `Save location for ${cust.name}`}
+        </button>
+      )}
+      {locSaved && (
+        <div className="loc-saved-msg"><Svg d={IC.check} size={14} /> Location saved for {cust?.name}</div>
+      )}
+
+      <Btn onClick={onReset}>Record Another Trip</Btn>
+    </div>
+  );
+}
+
 function MyTrips({ profile, settings }) {
   const [trips, setTrips] = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -649,7 +762,6 @@ function MyTrips({ profile, settings }) {
         <BackBtn onClick={() => setEditing(null)} />
         <div className="pg-hd"><h1>Edit Trip</h1><p className="pg-sub">{cust?.name} · {fmtDT(editing.createdAt)}</p></div>
         {err && <div className="inline-err">{err}</div>}
-
         <div className="card">
           <div className="two-col">
             <Field label="Vehicle Number">
@@ -664,7 +776,6 @@ function MyTrips({ profile, settings }) {
             <Field label="Notes"><Inp value={editNotes} onChange={e => setEditNotes(e.target.value)} /></Field>
           </div>
         </div>
-
         <div className="scan-section" style={{ borderLeftColor: '#2563eb' }}>
           <div className="scan-sec-hd">
             <span className="scan-sec-title" style={{ color: '#2563eb' }}>↑ Delivered Cylinders</span>
@@ -680,14 +791,13 @@ function MyTrips({ profile, settings }) {
               const info = cylInfo(qr);
               return (
                 <div key={qr} className="scan-row scan-row-filled">
-                  <span className="scan-row-code">{qr} · {info?.gasType || '?'} · {String(info?.size||'?').replace('m³','')}m³</span>
+                  <span className="scan-row-code">{fmtQR(qr)} · {info?.gasType || '?'} · {String(info?.size||'?').replace('m³','')}m³</span>
                   <button className="scan-row-rm" onClick={() => setEditDelivered(p => p.filter(x => x !== qr))}><Svg d={IC.x} size={13} /></button>
                 </div>
               );
             })}
           </div>
         </div>
-
         <div className="scan-section" style={{ borderLeftColor: '#059669' }}>
           <div className="scan-sec-hd">
             <span className="scan-sec-title" style={{ color: '#059669' }}>↓ Collected Cylinders</span>
@@ -703,14 +813,13 @@ function MyTrips({ profile, settings }) {
               const info = cylInfo(qr);
               return (
                 <div key={qr} className="scan-row scan-row-filled" style={{ borderColor: '#86efac', background: '#f0fdf4' }}>
-                  <span className="scan-row-code">{qr} · {info?.gasType || '?'} · {String(info?.size||'?').replace('m³','')}m³</span>
+                  <span className="scan-row-code">{fmtQR(qr)} · {info?.gasType || '?'} · {String(info?.size||'?').replace('m³','')}m³</span>
                   <button className="scan-row-rm" onClick={() => setEditCollected(p => p.filter(x => x !== qr))}><Svg d={IC.x} size={13} /></button>
                 </div>
               );
             })}
           </div>
         </div>
-
         <div style={{ display: 'flex', gap: '0.75rem' }}>
           <Btn onClick={saveEdit} full>Save Changes</Btn>
           <Btn variant="ghost" onClick={() => setEditing(null)} full>Cancel</Btn>
@@ -728,8 +837,9 @@ function MyTrips({ profile, settings }) {
           rows={trips.map(t => [
             fmtDT(t.createdAt),
             t.customerName,
-            (t.delivered || []).join(', ') || '—',
-            (t.collected || []).join(', ') || '—',
+            // CHANGE 1: show CCPL format in My Trips
+            (t.delivered || []).map(fmtQR).join(', ') || '—',
+            (t.collected || []).map(fmtQR).join(', ') || '—',
             t.vehicle || '—',
             canEdit(t)
               ? <Btn sm onClick={() => openEdit(t)}><Svg d={IC.edit} size={13} /> Edit</Btn>
@@ -742,12 +852,14 @@ function MyTrips({ profile, settings }) {
   );
 }
 
-function Customers() {
+// ── CHANGE 3: Customers with delete location (Admin/SA) ───────────────────
+function Customers({ isSA }) {
   const [list, setList] = useState([]);
   const [form, setForm] = useState({ name: '', contact: '', address: '', gst: '' });
   const [editing, setEditing] = useState(null);
   const [open, setOpen] = useState(false);
   const [del, setDel] = useState(null);
+  const [delLoc, setDelLoc] = useState(null);
   const [q, setQ] = useState('');
 
   const load = useCallback(async () => {
@@ -778,6 +890,11 @@ function Customers() {
     });
     if (Object.keys(held).length) { alert(`Cannot delete: ${del.name} has ${Object.keys(held).length} cylinder(s) out.`); setDel(null); return; }
     await deleteDoc(doc(db, 'customers', del.id)); setDel(null); load();
+  };
+
+  const confirmDelLoc = async () => {
+    await updateDoc(doc(db, 'customers', delLoc.id), { lat: null, lng: null });
+    setDelLoc(null); load();
   };
 
   const importCSV = e => {
@@ -816,8 +933,19 @@ function Customers() {
         </div>
       </div>
       <SearchBar placeholder="Search by name or GST…" value={q} onChange={setQ} />
-      <Tbl cols={['Name', 'Contact', 'Address', 'GST', '']}
-        rows={filtered.map(c => [c.name, c.contact || '—', c.address || '—', c.gst || 'N/A',
+      <Tbl cols={['Name', 'Contact', 'Address', 'GST', 'Location', '']}
+        rows={filtered.map(c => [
+          c.name,
+          c.contact || '—',
+          c.address || '—',
+          c.gst || 'N/A',
+          // Show GPS status + delete button for admin/SA
+          c.lat && c.lng
+            ? <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <Tag color="green">📍 Saved</Tag>
+                <button className="icon-btn icon-del" title="Delete location" onClick={() => setDelLoc(c)}><Svg d={IC.trash} size={13} /></button>
+              </div>
+            : <Tag color="amber">No location</Tag>,
           <div className="row-acts">
             <button className="icon-btn" onClick={() => openEdit(c)}><Svg d={IC.edit} size={14} /></button>
             <button className="icon-btn icon-del" onClick={() => setDel(c)}><Svg d={IC.trash} size={14} /></button>
@@ -835,6 +963,10 @@ function Customers() {
       <Modal open={!!del} title="Delete Customer" onClose={() => setDel(null)}>
         <div className="modal-body"><p>Delete <strong>{del?.name}</strong>? This cannot be undone.</p></div>
         <div className="modal-ft"><Btn danger onClick={confirmDel}>Delete</Btn><Btn variant="ghost" onClick={() => setDel(null)}>Cancel</Btn></div>
+      </Modal>
+      <Modal open={!!delLoc} title="Delete Location" onClose={() => setDelLoc(null)}>
+        <div className="modal-body"><p>Remove saved GPS location for <strong>{delLoc?.name}</strong>? The driver will be prompted to save it again on next visit.</p></div>
+        <div className="modal-ft"><Btn danger onClick={confirmDelLoc}>Delete Location</Btn><Btn variant="ghost" onClick={() => setDelLoc(null)}>Cancel</Btn></div>
       </Modal>
     </div>
   );
@@ -898,7 +1030,8 @@ function CustAnalytics({ settings }) {
     const cylRows = Object.entries(s.held).map(([qr, info]) => {
       const d = daysSince(info.since);
       const st = d >= settings.overdueCriticalDays ? 'critical' : d >= settings.overdueWarningDays ? 'warning' : 'ok';
-      return [qr, info.gas, fmtDate(info.since), `${d} days`,
+      // CHANGE 1: show CCPL format in customer analytics
+      return [fmtQR(qr), info.gas, fmtDate(info.since), `${d} days`,
         st === 'critical' ? <Tag color="red">Critical</Tag> : st === 'warning' ? <Tag color="amber">Warning</Tag> : <Tag color="green">OK</Tag>];
     });
     return (
@@ -914,7 +1047,7 @@ function CustAnalytics({ settings }) {
         {cylRows.length > 0 && (<><h3 className="sec-ttl">Cylinders Currently Out</h3><Tbl cols={['QR Code', 'Gas', 'Delivered On', 'Days Out', 'Status']} rows={cylRows} /></>)}
         <h3 className="sec-ttl">Trip History</h3>
         <Tbl cols={['Date', 'Delivered QRs', 'Collected QRs', 'Driver']}
-          rows={s.trips.map(t => [fmtDate(t.createdAt), (t.delivered || []).join(', ') || '—', (t.collected || []).join(', ') || '—', t.driverName])} />
+          rows={s.trips.map(t => [fmtDate(t.createdAt), (t.delivered || []).map(fmtQR).join(', ') || '—', (t.collected || []).map(fmtQR).join(', ') || '—', t.driverName])} />
       </div>
     );
   }
@@ -985,6 +1118,7 @@ function Cylinders() {
     setOpen(false); setEditing(null); load();
   };
 
+  // ── CHANGE 1 + 2: PDF with CCPL format ───────────────────────────────────
   const genPDF = async items => {
     if (!items.length) { alert('Nothing selected'); return; }
     try {
@@ -996,8 +1130,9 @@ function Cylinders() {
       for (const c of items) {
         const img = await QRC.toDataURL(c.qrCode, { width: 300, margin: 1 });
         pdf.addImage(img, 'PNG', x, y, sz, sz);
-        pdf.setFontSize(12); pdf.setFont('helvetica', 'bold');
-        pdf.text(c.qrCode, x + sz / 2, y + sz + 5, { align: 'center' });
+        pdf.setFontSize(11); pdf.setFont('helvetica', 'bold');
+        // CHANGE 1: show CCPL-XXXXX in PDF
+        pdf.text(fmtQR(c.qrCode), x + sz / 2, y + sz + 5, { align: 'center' });
         pdf.setFontSize(8); pdf.setFont('helvetica', 'normal');
         if (c.gasType && c.gasType !== '---') pdf.text(`${c.gasType} · ${String(c.size||'').replace('m³','')}m³`, x + sz / 2, y + sz + 10, { align: 'center' });
         n++; x += sz + gap;
@@ -1008,15 +1143,99 @@ function Cylinders() {
     } catch (e) { alert('PDF error: ' + e.message); }
   };
 
+  // ── CHANGE 2: DXF Export ──────────────────────────────────────────────────
+  const genDXF = async items => {
+    if (!items.length) { alert('Nothing selected'); return; }
+    try {
+      const QRC = (await import('qrcode')).default;
+
+      // DXF units = mm. Each tile: 150x150mm square
+      const TILE = 150;
+      const MARGIN = 20;
+      const GAP = 15;
+      const COLS = 4;
+      const QR_SIZE = 110; // QR square inside the tile
+      const QR_OFFSET_X = (TILE - QR_SIZE) / 2;
+      const QR_OFFSET_Y = 10;
+      const TEXT_Y_OFFSET = QR_OFFSET_Y + QR_SIZE + 10;
+
+      let dxfEntities = '';
+
+      const addLine = (x1, y1, x2, y2, layer = '0') => {
+        dxfEntities += `0\nLINE\n8\n${layer}\n10\n${x1.toFixed(4)}\n20\n${y1.toFixed(4)}\n30\n0.0\n11\n${x2.toFixed(4)}\n21\n${y2.toFixed(4)}\n31\n0.0\n`;
+      };
+
+      const addText = (x, y, text, height = 5, layer = 'TEXT') => {
+        dxfEntities += `0\nTEXT\n8\n${layer}\n10\n${x.toFixed(4)}\n20\n${y.toFixed(4)}\n30\n0.0\n40\n${height}\n1\n${text}\n72\n1\n11\n${x.toFixed(4)}\n21\n${y.toFixed(4)}\n`;
+      };
+
+      for (let idx = 0; idx < items.length; idx++) {
+        const c = items[idx];
+        const col = idx % COLS;
+        const row = Math.floor(idx / COLS);
+        const baseX = MARGIN + col * (TILE + GAP);
+        const baseY = MARGIN + row * (TILE + GAP);
+
+        // Outer border (150x150)
+        addLine(baseX, baseY, baseX + TILE, baseY, 'BORDER');
+        addLine(baseX + TILE, baseY, baseX + TILE, baseY + TILE, 'BORDER');
+        addLine(baseX + TILE, baseY + TILE, baseX, baseY + TILE, 'BORDER');
+        addLine(baseX, baseY + TILE, baseX, baseY, 'BORDER');
+
+        // QR code as vector dots
+        const matrix = await QRC.create(c.qrCode, { errorCorrectionLevel: 'M' });
+        const modules = matrix.modules;
+        const size = modules.size;
+        const cellSize = QR_SIZE / size;
+
+        for (let r = 0; r < size; r++) {
+          for (let col2 = 0; col2 < size; col2++) {
+            if (modules.get(r, col2)) {
+              const px = baseX + QR_OFFSET_X + col2 * cellSize;
+              const py = baseY + QR_OFFSET_Y + r * cellSize;
+              // Draw filled square as 4 lines (CNC etching reads as filled region)
+              addLine(px, py, px + cellSize, py, 'QR');
+              addLine(px + cellSize, py, px + cellSize, py + cellSize, 'QR');
+              addLine(px + cellSize, py + cellSize, px, py + cellSize, 'QR');
+              addLine(px, py + cellSize, px, py, 'QR');
+            }
+          }
+        }
+
+        // Label text: CCPL-XXXXX  ·  CO2  ·  10m³
+        const label = `${fmtQR(c.qrCode)}${c.gasType && c.gasType !== '---' ? `  ${c.gasType}  ${String(c.size||'').replace('m3','').replace('m³','')}m3` : ''}`;
+        addText(baseX + TILE / 2, baseY + TEXT_Y_OFFSET, label, 6, 'TEXT');
+      }
+
+      const dxf = `0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n0\nENDSEC\n0\nSECTION\n2\nLAYER\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n${dxfEntities}0\nENDSEC\n0\nEOF\n`;
+
+      const blob = new Blob([dxf], { type: 'application/dxf' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'qr_codes.dxf';
+      a.click();
+    } catch (e) { alert('DXF error: ' + e.message); }
+  };
+
   const genSel = () => genPDF(list.filter(c => sel.includes(c.id)));
+  const genSelDXF = () => genDXF(list.filter(c => sel.includes(c.id)));
   const genRange = () => {
     const f = parseInt(rf), t = parseInt(rt);
     if (isNaN(f) || isNaN(t) || f > t) { alert('Invalid range'); return; }
     genPDF(list.filter(c => { const n = parseInt(c.qrCode); return n >= f && n <= t; }));
   };
+  const genRangeDXF = () => {
+    const f = parseInt(rf), t = parseInt(rt);
+    if (isNaN(f) || isNaN(t) || f > t) { alert('Invalid range'); return; }
+    genDXF(list.filter(c => { const n = parseInt(c.qrCode); return n >= f && n <= t; }));
+  };
   const genBulk = () => {
     const start = list.length ? Math.max(...list.map(c => parseInt(c.qrCode) || 0)) + 1 : 1;
     genPDF(Array.from({ length: parseInt(bulkN) }, (_, i) => ({ qrCode: pad3(start + i), gasType: '---', size: '---' })));
+  };
+  const genBulkDXF = () => {
+    const start = list.length ? Math.max(...list.map(c => parseInt(c.qrCode) || 0)) + 1 : 1;
+    genDXF(Array.from({ length: parseInt(bulkN) }, (_, i) => ({ qrCode: pad3(start + i), gasType: '---', size: '---' })));
   };
 
   const toggleSel = id => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
@@ -1030,24 +1249,51 @@ function Cylinders() {
           <Svg d={IC.plus} size={14} /> Add Cylinder
         </Btn>
       </div>
+
+      {/* CHANGE 2: QR panel with both PDF and DXF buttons */}
       <div className="qr-panel">
-        <div className="qr-panel-title">Generate QR Code PDFs</div>
+        <div className="qr-panel-title">Generate QR Codes</div>
         <div className="qr-panel-row">
-          <div className="qr-block"><div className="qr-block-lbl">From selection ({sel.length})</div><Btn variant="ghost" sm disabled={!sel.length} onClick={genSel}><Svg d={IC.dl} size={13} /> Download PDF</Btn></div>
+          <div className="qr-block">
+            <div className="qr-block-lbl">From selection ({sel.length})</div>
+            <div className="qr-inline">
+              <Btn variant="ghost" sm disabled={!sel.length} onClick={genSel}><Svg d={IC.dl} size={13} /> PDF</Btn>
+              <Btn variant="ghost" sm disabled={!sel.length} onClick={genSelDXF}><Svg d={IC.dl} size={13} /> DXF</Btn>
+            </div>
+          </div>
           <div className="qr-divider" />
-          <div className="qr-block"><div className="qr-block-lbl">By QR range</div><div className="qr-inline"><Inp placeholder="From" value={rf} onChange={e => setRf(e.target.value)} style={{ width: 64 }} /><span>—</span><Inp placeholder="To" value={rt} onChange={e => setRt(e.target.value)} style={{ width: 64 }} /><Btn variant="ghost" sm onClick={genRange}><Svg d={IC.dl} size={13} /> Get PDF</Btn></div></div>
+          <div className="qr-block">
+            <div className="qr-block-lbl">By QR range</div>
+            <div className="qr-inline">
+              <Inp placeholder="From" value={rf} onChange={e => setRf(e.target.value)} style={{ width: 64 }} />
+              <span>—</span>
+              <Inp placeholder="To" value={rt} onChange={e => setRt(e.target.value)} style={{ width: 64 }} />
+              <Btn variant="ghost" sm onClick={genRange}><Svg d={IC.dl} size={13} /> PDF</Btn>
+              <Btn variant="ghost" sm onClick={genRangeDXF}><Svg d={IC.dl} size={13} /> DXF</Btn>
+            </div>
+          </div>
           <div className="qr-divider" />
-          <div className="qr-block"><div className="qr-block-lbl">Bulk new (next: <strong>{nextQR(list)}</strong>)</div><div className="qr-inline"><Inp type="number" value={bulkN} onChange={e => setBulkN(e.target.value)} style={{ width: 64 }} /><span>codes</span><Btn variant="ghost" sm onClick={genBulk}><Svg d={IC.dl} size={13} /> Get PDF</Btn></div></div>
+          <div className="qr-block">
+            <div className="qr-block-lbl">Bulk new (next: <strong>{fmtQR(nextQR(list))}</strong>)</div>
+            <div className="qr-inline">
+              <Inp type="number" value={bulkN} onChange={e => setBulkN(e.target.value)} style={{ width: 64 }} />
+              <span>codes</span>
+              <Btn variant="ghost" sm onClick={genBulk}><Svg d={IC.dl} size={13} /> PDF</Btn>
+              <Btn variant="ghost" sm onClick={genBulkDXF}><Svg d={IC.dl} size={13} /> DXF</Btn>
+            </div>
+          </div>
         </div>
       </div>
+
       <div className="tbl-ctrl">
         <label className="chk-lbl"><input type="checkbox" checked={sel.length === list.length && list.length > 0} onChange={toggleAll} /> Select all</label>
         {sel.length > 0 && <span className="sel-count">{sel.length} selected</span>}
       </div>
-      <Tbl cols={['', 'QR', 'Physical ID', 'Gas Type', 'Size', '']}
+      <Tbl cols={['', 'QR Code', 'Physical ID', 'Gas Type', 'Size', '']}
         rows={list.map(c => [
           <input type="checkbox" checked={sel.includes(c.id)} onChange={() => toggleSel(c.id)} onClick={e => e.stopPropagation()} />,
-          <strong>{c.qrCode}</strong>, c.physicalId, c.gasType, `${c.size?.replace('m³','').trim()} m³`,
+          // CHANGE 1: show CCPL format in table
+          <strong>{fmtQR(c.qrCode)}</strong>, c.physicalId, c.gasType, `${c.size?.replace('m³','').trim()} m³`,
           <div className="row-acts">
             <button className="icon-btn" onClick={() => { setEditing(c); setForm({ physicalId: c.physicalId, size: c.size, gasType: c.gasType }); setOpen(true); }}><Svg d={IC.edit} size={14} /></button>
             <button className="icon-btn icon-del" onClick={() => setDel(c)}><Svg d={IC.trash} size={14} /></button>
@@ -1055,9 +1301,9 @@ function Cylinders() {
         ])} />
       <Modal open={open} title={editing ? 'Edit Cylinder' : 'Add Cylinder'} onClose={() => setOpen(false)}>
         <div className="modal-body">
-          {!editing && (<label className="chk-lbl" style={{ marginBottom: '1rem' }}><input type="checkbox" checked={autoQR} onChange={e => setAutoQR(e.target.checked)} /> Auto-assign next QR: <strong>{nextQR(list)}</strong></label>)}
+          {!editing && (<label className="chk-lbl" style={{ marginBottom: '1rem' }}><input type="checkbox" checked={autoQR} onChange={e => setAutoQR(e.target.checked)} /> Auto-assign next QR: <strong>{fmtQR(nextQR(list))}</strong></label>)}
           {(!autoQR && !editing) && <Field label="QR Code"><Inp value={manualQR} onChange={e => setManualQR(e.target.value)} placeholder="e.g. 042" /></Field>}
-          {editing && <Field label="QR Code"><Inp value={editing.qrCode} disabled /></Field>}
+          {editing && <Field label="QR Code"><Inp value={fmtQR(editing.qrCode)} disabled /></Field>}
           <Field label="Physical ID" req><Inp value={form.physicalId} onChange={e => setForm({ ...form, physicalId: e.target.value })} placeholder="e.g. CYL-553" /></Field>
           <Field label="Gas Type"><Sel value={form.gasType} onChange={e => setForm({ ...form, gasType: e.target.value })}><option value="CO2">CO₂</option><option value="O2">O₂</option></Sel></Field>
           <Field label="Size (m³)"><Sel value={form.size} onChange={e => setForm({ ...form, size: e.target.value })}>{['2', '5', '7', '10', '15', '20', '25', '30'].map(s => <option key={s}>{s}</option>)}</Sel></Field>
@@ -1065,7 +1311,7 @@ function Cylinders() {
         <div className="modal-ft"><Btn onClick={save}>Save</Btn><Btn variant="ghost" onClick={() => setOpen(false)}>Cancel</Btn></div>
       </Modal>
       <Modal open={!!del} title="Delete Cylinder" onClose={() => setDel(null)}>
-        <div className="modal-body"><p>Delete cylinder <strong>{del?.qrCode}</strong>? This cannot be undone.</p></div>
+        <div className="modal-body"><p>Delete cylinder <strong>{fmtQR(del?.qrCode)}</strong>? This cannot be undone.</p></div>
         <div className="modal-ft"><Btn danger onClick={async () => { await deleteDoc(doc(db, 'cylinders', del.id)); setDel(null); load(); }}>Delete</Btn><Btn variant="ghost" onClick={() => setDel(null)}>Cancel</Btn></div>
       </Modal>
     </div>
@@ -1141,7 +1387,7 @@ function CylAnalytics({ settings }) {
       <div className="tbl-wrap">
         <table className="tbl">
           <thead><tr>
-            <SortTh label="QR" k="qrCode" sortK={sortK} sortD={sortD} onSort={sort} />
+            <SortTh label="QR Code" k="qrCode" sortK={sortK} sortD={sortD} onSort={sort} />
             <th>Physical ID</th><th>Size</th>
             <SortTh label="Status" k="status" sortK={sortK} sortD={sortD} onSort={sort} />
             <th>With Customer</th>
@@ -1153,7 +1399,8 @@ function CylAnalytics({ settings }) {
           <tbody>
             {rows.map(c => (
               <tr key={c.id} className="tbl-link" onClick={() => setSel(c)}>
-                <td><strong>{c.qrCode}</strong></td>
+                {/* CHANGE 1: CCPL format in cylinder analytics */}
+                <td><strong>{fmtQR(c.qrCode)}</strong></td>
                 <td>{c.physicalId}</td><td>{c.size?.replace('m³','').trim()} m³</td>
                 <td>{c._s.status === 'out' ? <Tag color="amber">Out</Tag> : <Tag color="green">Available</Tag>}</td>
                 <td>{c._s.customer || '—'}</td>
@@ -1174,7 +1421,7 @@ function CylAnalytics({ settings }) {
     return (
       <div>
         <BackBtn onClick={() => setSel(null)} />
-        <div className="pg-hd"><h1>Cylinder {sel.qrCode}</h1><p className="pg-sub">Physical: {sel.physicalId} · {sel.gasType} · {sel.size?.replace('m³','').trim()} m³</p></div>
+        <div className="pg-hd"><h1>Cylinder {fmtQR(sel.qrCode)}</h1><p className="pg-sub">Physical: {sel.physicalId} · {sel.gasType} · {sel.size?.replace('m³','').trim()} m³</p></div>
         <div className="kpi-grid">
           <KPI label="Status" value={s.status === 'out' ? 'OUT' : 'AVAILABLE'} color={s.status === 'out' ? '#d97706' : '#059669'} />
           <KPI label="With Customer" value={s.customer || '—'} color="#2563eb" />
@@ -1239,7 +1486,8 @@ function TripHistory() {
       </div>
       {loading ? <div className="pg-load">Loading…</div> : (
         <Tbl cols={['Date & Time', 'Customer', 'Delivered QRs', 'Collected QRs', 'Driver', 'Notes']}
-          rows={filtered.map(t => [fmtDT(t.createdAt), t.customerName, (t.delivered || []).join(', ') || '—', (t.collected || []).join(', ') || '—', t.driverName, t.notes || '—'])} />
+          // CHANGE 1: CCPL format in trip history
+          rows={filtered.map(t => [fmtDT(t.createdAt), t.customerName, (t.delivered || []).map(fmtQR).join(', ') || '—', (t.collected || []).map(fmtQR).join(', ') || '—', t.driverName, t.notes || '—'])} />
       )}
     </div>
   );
@@ -1306,7 +1554,6 @@ function DriverAnalytics() {
   );
 }
 
-// ── Vehicles ───────────────────────────────────────────────────────────────
 function Vehicles() {
   const [list, setList] = useState([]);
   const [form, setForm] = useState({ number: '', description: '' });
@@ -1355,9 +1602,7 @@ function Vehicles() {
         rows={list.map(v => [
           <strong>{v.number}</strong>,
           v.description || '—',
-          v.active !== false
-            ? <Tag color="green">Active</Tag>
-            : <Tag color="amber">Inactive</Tag>,
+          v.active !== false ? <Tag color="green">Active</Tag> : <Tag color="amber">Inactive</Tag>,
           <div className="row-acts">
             <button className="icon-btn" onClick={() => openEdit(v)}><Svg d={IC.edit} size={14} /></button>
             <button className="icon-btn" title={v.active !== false ? 'Deactivate' : 'Activate'}
