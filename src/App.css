@@ -496,3 +496,40 @@ select.inp { cursor:pointer; }
 @media (max-width: 768px) {
   .nav-item-signout-mobile { display: flex; }
 }
+/* ── Nearby customers (GPS suggestion) ──────────────────────────────────── */
+.nearby-box {
+  background: #eff6ff; border: 1px solid #bfdbfe;
+  border-radius: var(--r); padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+.nearby-label {
+  display: flex; align-items: center; gap: 0.4rem;
+  font-size: 0.75rem; font-weight: 700; color: #1d4ed8;
+  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;
+}
+.nearby-chips { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.nearby-chip {
+  display: flex; align-items: center; gap: 0.4rem;
+  background: #fff; border: 1.5px solid #bfdbfe;
+  border-radius: 20px; padding: 0.3rem 0.75rem;
+  font-size: 0.82rem; font-weight: 600; color: #1e40af;
+  cursor: pointer; transition: all 0.12s;
+}
+.nearby-chip:hover { background: #dbeafe; border-color: #93c5fd; }
+.nearby-chip-active { background: var(--blue); border-color: var(--blue); color: #fff; }
+.nearby-dist { font-size: 0.72rem; font-weight: 500; opacity: 0.75; }
+
+/* ── Save location button (on trip done screen) ──────────────────────────── */
+.save-loc-btn {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  background: #fff; border: 1.5px solid #bfdbfe;
+  border-radius: var(--r); padding: 0.6rem 1.2rem;
+  font-size: 0.875rem; font-weight: 600; color: #1d4ed8;
+  cursor: pointer; transition: all 0.12s; margin-top: 0.25rem;
+}
+.save-loc-btn:hover { background: #eff6ff; border-color: var(--blue); }
+.save-loc-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.loc-saved-msg {
+  display: flex; align-items: center; gap: 0.4rem;
+  font-size: 0.85rem; color: var(--green); font-weight: 600;
+}
