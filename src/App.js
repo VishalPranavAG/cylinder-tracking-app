@@ -27,8 +27,7 @@ const toDate = ts => ts?.toDate ? ts.toDate() : ts ? new Date(ts) : null;
 const daysSince = ts => { const d = toDate(ts); return d ? Math.floor((Date.now() - d) / 86400000) : 0; };
 const fmtDate = ts => { const d = toDate(ts); return d ? d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; };
 const fmtDT = ts => { const d = toDate(ts); return d ? d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'; };
-const pad3 = n => String(n).padStart(3, '0');
-const nextQR = list => list.length ? pad3(Math.max(...list.map(c => parseInt(c.qrCode) || 0)) + 1) : '001';
+const nextQR = list => list.length ? String(Math.max(...list.map(c => parseInt(c.qrCode) || 0)) + 1) : '1';
 
 // ── CHANGE 1: CCPL display format ─────────────────────────────────────────
 // Formats QR code for display: "001" → "CCPL-00001"
