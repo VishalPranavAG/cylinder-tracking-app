@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { initializeApp, getApps } from 'firebase/app';
-import { getAuth, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword } from 'firebase/auth';
+import { getAuth, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import './App.css';
 
@@ -247,11 +247,32 @@ function LoginScreen() {
   const [show, setShow] = useState(false);
   const [err, setErr] = useState('');
   const [forgot, setForgot] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetMsg, setResetMsg] = useState('');
+  const [resetErr, setResetErr] = useState('');
+  const [resetBusy, setResetBusy] = useState(false);
 
   const submit = async e => {
     e.preventDefault(); setErr('');
     try { await signInWithEmailAndPassword(auth, email, pw); }
     catch { setErr('Invalid email or password.'); }
+  };
+
+  const sendReset = async () => {
+    if (!resetEmail.trim()) { setResetErr('Please enter your email.'); return; }
+    setResetBusy(true); setResetErr(''); setResetMsg('');
+    try {
+      await sendPasswordResetEmail(auth, resetEmail.trim());
+      setResetMsg('Password reset email sent! Check your inbox.');
+    } catch (e) {
+      setResetErr('Could not send email. Check the address and try again.');
+    }
+    setResetBusy(false);
+  };
+
+  const closeReset = () => {
+    setForgot(false);
+    setResetEmail(''); setResetMsg(''); setResetErr('');
   };
 
   return (
@@ -261,11 +282,15 @@ function LoginScreen() {
         <h1 className="login-h">CylTrack</h1>
         <p className="login-sub">Gas Cylinder Management System</p>
         <form onSubmit={submit} style={{ marginTop: '1.75rem' }}>
-          <Field label="Email"><Inp type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="user@cylinder.local" required /></Field>
+          <Field label="Email">
+            <Inp type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="user@gmail.com" required />
+          </Field>
           <Field label="Password">
             <div className="pw-wrap">
               <Inp type={show ? 'text' : 'password'} value={pw} onChange={e => setPw(e.target.value)} placeholder="••••••••" required />
-              <button type="button" className="pw-eye" onClick={() => setShow(s => !s)}><Svg d={show ? IC.eyeoff : IC.eye} size={16} /></button>
+              <button type="button" className="pw-eye" onClick={() => setShow(s => !s)}>
+                <Svg d={show ? IC.eyeoff : IC.eye} size={16} />
+              </button>
             </div>
           </Field>
           {err && <div className="login-err">{err}</div>}
@@ -273,13 +298,29 @@ function LoginScreen() {
         </form>
         <button className="forgot-link" onClick={() => setForgot(true)}>Forgot password?</button>
       </div>
-      <Modal open={forgot} title="Password Reset" onClose={() => setForgot(false)}>
+
+      <Modal open={forgot} title="Reset Password" onClose={closeReset}>
         <div className="modal-body">
-          <p>Contact the administrator for a password reset:</p>
-          <div className="contact-box">vishalpranav23@gmail.com</div>
-          <p style={{ marginTop: '0.5rem', fontSize: '0.82rem', color: '#888' }}>Include your login email in the message.</p>
+          <p>Enter the email address for your account and we'll send you a reset link.</p>
+          <div style={{ marginTop: '1rem' }}>
+            <Field label="Email Address">
+              <Inp
+                type="email"
+                value={resetEmail}
+                onChange={e => { setResetEmail(e.target.value); setResetErr(''); setResetMsg(''); }}
+                placeholder="your@gmail.com"
+              />
+            </Field>
+          </div>
+          {resetErr && <div className="login-err">{resetErr}</div>}
+          {resetMsg && <div className="success-bar"><Svg d={IC.check} size={14} /> {resetMsg}</div>}
         </div>
-        <div className="modal-ft"><Btn onClick={() => setForgot(false)}>Close</Btn></div>
+        <div className="modal-ft">
+          <Btn onClick={sendReset} disabled={resetBusy}>
+            {resetBusy ? 'Sending…' : 'Send Reset Email'}
+          </Btn>
+          <Btn variant="ghost" onClick={closeReset}>Cancel</Btn>
+        </div>
       </Modal>
     </div>
   );
